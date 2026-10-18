@@ -1,5 +1,5 @@
 """
-brain.py - How OpsMate understands questions and writes answers.
+brain.py - How iKnow understands questions and writes answers.
 
   Layer 1  UNDERSTAND  spelling fix + Hinglish (offline), topic + answer format;
                        AI rephrases unclear questions (fast model, only when needed)
@@ -74,6 +74,8 @@ SYNONYMS = {
     "usa": "united states", "us": "united states", "uk": "united kingdom",
     "dollar": "usd", "dollars": "usd", "euro": "eur", "euros": "eur", "rupees": "inr", "rs": "inr",
     "pounds": "gbp", "approves": "approval approve", "approve": "approval",
+    "amex": "american express AX", "mastercard": "CA", "visa": "VI", "diners": "DC",
+    "vs": "difference", "oneway": "one way", "roundtrip": "return round trip",
 }
 TIME_WORDS = re.compile(r"\b(how long|how many days|how much time|days|kitne din)\b", re.I)
 
@@ -89,6 +91,7 @@ def search_text(question):
     """The words to SEARCH with: Hinglish translated, format words removed."""
     q = " ".join(HINGLISH.get(w.lower(), w) for w in question.split())
     q = FORMAT_WORDS.sub(" ", q)
+    q = re.sub(r"\bone[\s-]+ways?\b", "one-way", q, flags=re.I)        # 'way' is generic, 'one way' is not
     # generic words ('looks', 'image', 'Europe', 'command') would pull in sections that merely
     # contain them - leave them out when the question has 2+ specific words
     words = re.findall(r"[A-Za-z0-9]+", q)
@@ -146,7 +149,7 @@ def fix_spelling(question, vocab):
         w = m.group(0)
         lw = w.lower()
         if (len(lw) < 4 or lw in vocab or lw in HINGLISH or not lw.isalpha()
-                or lw in _STOP or lw in _SOFT or lw in _PLAIN):   # everyday words are never 'corrected'
+                or lw in _STOP or lw in _SOFT or lw in _PLAIN or lw in SYNONYMS):   # everyday words are never 'corrected'
             return w
         cut = 0.75 if len(lw) >= 6 else 0.8
         best = difflib.get_close_matches(lw, vocab_list, n=1, cutoff=cut)
@@ -234,7 +237,8 @@ long take takes time timeline many much come does happen kya hai have has had gi
 # good passage often does not repeat. They count only when the question has nothing more specific.
 _SOFT = set("""check checking find see show use using make way gds system systems command commands cmd entry
 entries format formats tool tools screen look looks looking like image images picture pictures pic sample
-samples example examples screenshot refer reference europe noram apac qbay global region lob""".split())
+samples example examples screenshot refer reference europe noram apac qbay global region lob
+difference between versus compare""".split())
 
 
 def coverage(question, text):
@@ -265,7 +269,7 @@ def content_words(question):
 
 
 def offline_confidence(score, cover, semantic=None, nwords=3):
-    """high / medium / low. 'low' means OpsMate gives the supervisor message instead
+    """high / medium / low. 'low' means iKnow gives the supervisor message instead
     of guessing. Tested: real questions match 70%+ of their key words, out-of-scope
     questions (leave, canteen, salary...) match half or fewer."""
     if semantic is not None:
@@ -387,6 +391,15 @@ def _as_table(text):
     return "\n".join(md)
 
 
+_DEF = re.compile(r"^\s*(?:what\s+is|what's|whats|what\s+are|define|meaning\s+of|full\s+form\s+of)\s+"
+                  r"(?:an?\s+|the\s+)?([A-Za-z0-9][\w /&.-]{0,40}?)\s*\??\s*$", re.I)
+
+
+def _def_term(question):
+    m = _DEF.match(question or "")
+    return m.group(1).strip() if m and len(m.group(1).split()) <= 4 else None
+
+
 def crisp_answer(question, hits, fmt):
     """No AI key: build a short answer from the best passage(s)."""
     top = hits[0]
@@ -394,6 +407,10 @@ def crisp_answer(question, hits, fmt):
         return top["text"]
 
     text = _clean(top["text"], top["location"])
+    # FAQ entry ("Q: ... A: ..."): the written answer is short and curated - show all of it
+    m = re.match(r"\s*Q\s*[:.\-].*?\n\s*A\s*[:.\-]\s*(.+)", top["text"], re.S)
+    if m and len(m.group(1)) <= 900:
+        return m.group(1).strip()
     body = None
     if fmt == "table" or ("|" in text and text.count("|") > 4):
         table = _as_table(text)
@@ -416,18 +433,32 @@ def crisp_answer(question, hits, fmt):
             intro = intro if 0 < len(intro.split()) <= 25 and not _STEP_LINE.match(intro) else ""
             body = (f"{intro}\n\n" if intro else "") + "\n".join(
                 f"{i}. {s}" for i, s in enumerate(steps[:10], 1))
+    term = _def_term(question)
+    if body is None and term:
+        # "what is open jaw" -> the line / sentence that DEFINES it ("Open jaw: ..."), not the first line
+        rx = re.compile(rf"^\W*{re.escape(term)}s?\b\s*(:|-|–|\(|=|is\b|are\b|means\b)", re.I)
+        cands = [l.strip(" -•*") for l in text.splitlines() if l.strip()] + _sentences(text)
+        hit = next((c for c in cands if rx.match(c)), None)
+        if hit:
+            body = hit
     if body is None:
-        sents = _sentences(text)
+        lines = [l.strip() for l in text.splitlines() if l.strip()]
+        # a list of one-line entries (airport codes, terms): pick the matching lines, not the first ones
+        entry = sum(1 for l in lines if re.match(r"^([A-Z0-9]{2,4} - |[^:]{2,70}: )", l))
+        as_list = len(lines) >= 5 and entry >= 0.6 * len(lines)
+        sents = lines if as_list else _sentences(text)
         ranked = sorted(range(len(sents)), key=lambda i: -_overlap(question, sents[i]))[:3]
+        if as_list:                     # list entries: best match first, only entries that match
+            ranked = [i for i in ranked if _overlap(question, sents[i]) > 0] or ranked[:1]
         picked, words = [], 0
-        for i in sorted(ranked):
+        for i in (ranked if as_list else sorted(ranked)):
             w = len(sents[i].split())
             if words + w > config.MAX_ANSWER_WORDS and picked:
                 break
             picked.append(sents[i]); words += w
         body = "\n".join(f"- {s}" for s in picked) if len(picked) > 1 else (picked[0] if picked else text[:300])
 
-    return body
+    return body or (top["text"] or "").strip()[:600]   # never an empty answer
 
 
 # ---------------------------------------------------------------------------

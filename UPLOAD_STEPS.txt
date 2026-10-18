@@ -1,0 +1,30 @@
+iKnow v4.3 (formerly OpsMate v4.2) - how to update GitHub
+=========================================================
+
+1. Open your PRIVATE GitHub repository (the one your Streamlit app uses).
+2. Click "Add file" -> "Upload files".
+3. Drag in ALL files from this folder, including the "templates" folder.
+   They replace the old files with the same name. (This UPLOAD_STEPS.txt does not need to go in.)
+4. In the "templates" folder on GitHub, delete the two old files:
+      templates/OpsMate_FAQ_Template.docx
+      templates/OpsMate_SOP_Template.docx
+   (open each file -> ... menu -> Delete file -> Commit changes)
+5. Commit message:  iKnow v4.3 - new name, backup AI, smarter answers without AI
+   -> "Commit changes".
+6. Streamlit: the app updates itself in 1-2 minutes. If it does not: open the app -> ⋮ menu -> Reboot app.
+
+Do NOT change: requirements.txt, packages.txt, .streamlit folder, the data folder, your Secrets.
+The repository name and app link stay the same, so your saved SME answers and chats are kept.
+
+Optional Secrets (Streamlit -> App -> Settings -> Secrets), each on ONE line:
+   AI_BACKUP = "auto"            (default - no need to add)
+   ANTHROPIC_API_KEY = "..."     (only if you have a paid Claude key as a second backup)
+
+After the reboot, check:
+   Admin -> Settings -> "Order it tries"  (e.g. Gemini -> documents)
+   Admin -> Settings -> Test AI connection
+   Ask: "BLR airport", "card code for amex", "what is open jaw"
+
+Ollama on your laptop
+   The Streamlit Cloud link cannot reach Ollama on your laptop. To use Ollama, run iKnow on the
+   same laptop with START_APP.bat - it finds Ollama by itself. See LOCAL_AI_SETUP.md, section C.

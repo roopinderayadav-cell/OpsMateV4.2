@@ -1,5 +1,5 @@
 """
-ui.py - OpsMate look and feel: colours, header bar, cards and small display helpers.
+ui.py - iKnow look and feel: colours, header bar, cards and small display helpers.
 """
 import html
 

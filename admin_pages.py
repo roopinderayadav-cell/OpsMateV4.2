@@ -1,5 +1,5 @@
 """
-admin_pages.py - OpsMate admin screens: Dashboard & Analytics, Document Management,
+admin_pages.py - iKnow admin screens: Dashboard & Analytics, Document Management,
 SME Desk, Review Queue, Knowledge Gaps, Learned Answers, Announcements, Settings.
 """
 import json
@@ -51,7 +51,7 @@ def dashboard(region, user):
     gap_list = kb.knowledge_gaps(None if reg == "All" else reg, since)
     c4.write("")
     c4.download_button("⬇ Export to Excel", kb.export_excel(df, gap_list), type="primary",
-                       file_name=f"OpsMate_questions_{datetime.now():%Y-%m-%d}.xlsx",
+                       file_name=f"iKnow_questions_{datetime.now():%Y-%m-%d}.xlsx",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        width="stretch")
     if df.empty:
@@ -176,7 +176,7 @@ def documents(region, user):
                                     "by this document - see Knowledge Gaps.")
                     except Exception as e:
                         st.error(f"✖ {f.name}: {e}")
-        st.caption("Tip: use the OpsMate SOP / FAQ templates - clear headings, numbered steps, real tables "
+        st.caption("Tip: use the iKnow SOP / FAQ templates - clear headings, numbered steps, real tables "
                    "and 'Q:' / 'A:' FAQs give the most accurate answers.")
 
     c1, c0, c2, c3, c4 = st.columns([1, 1.2, 1, 1, 2])
@@ -239,7 +239,7 @@ def documents(region, user):
 # ---------------------------------------------------------------------------
 def review(region, user):
     st.header("Review Queue")
-    st.caption("Questions OpsMate could not answer, answered with low confidence, found conflicting answers "
+    st.caption("Questions iKnow could not answer, answered with low confidence, found conflicting answers "
                "for, or staff marked 👎 (the same list SMEs see on the SME Desk, one row per time asked). "
                "Write the correct answer once - it is used for similar questions from then on.")
     scope = st.radio("Show", ["This region", "All regions"], horizontal=True)
@@ -262,7 +262,7 @@ def review(region, user):
                 from pathlib import Path
                 if Path(q["image_path"]).exists():
                     st.image(q["image_path"], caption="Screenshot the agent pasted", width=360)
-            with st.expander("What OpsMate answered"):
+            with st.expander("What iKnow answered"):
                 st.markdown(q["answer"] or "")
             with st.form(f"teach{q['id']}"):
                 new_q = st.text_input("Question (edit to make it general)", _clean_q(q["question"]))
@@ -287,17 +287,17 @@ def review(region, user):
 
 
 # ---------------------------------------------------------------------------
-# SME DESK - an SME answers what OpsMate could not answer well. Their answer is saved as a
-# verified answer that OpsMate searches FIRST next time. Uploaded SOPs are never changed.
+# SME DESK - an SME answers what iKnow could not answer well. Their answer is saved as a
+# verified answer that iKnow searches FIRST next time. Uploaded SOPs are never changed.
 # ---------------------------------------------------------------------------
 REASON_ICON = {"No answer": "🕳️", "Documents disagree": "⚠️", "Not helpful 👎": "👎"}
 
 
 def sme_desk(region, user):
     st.header("🧑‍🏫 SME Desk")
-    st.caption("Questions OpsMate could not answer, answered with less than "
+    st.caption("Questions iKnow could not answer, answered with less than "
                f"{config.SME_REVIEW_BELOW_PCT}% confidence, found conflicting SOPs for, or staff marked 👎. "
-               "Write the correct answer once - OpsMate uses it for this and similar questions from then on. "
+               "Write the correct answer once - iKnow uses it for this and similar questions from then on. "
                "Uploaded SOPs and documents are not changed.")
     n_wait, n_rev = len(kb.waiting_chats()), len(kb.chats_to_review(sme=user))
     t1, tc, t2, th = st.tabs(["⏳ Waiting for an SME", f"💬 Live chat ({n_wait} waiting"
@@ -348,7 +348,7 @@ def _sme_card(n, g, user):
             if Path(q["image_path"]).exists():
                 st.image(q["image_path"], caption="Screenshot the agent pasted", width=360)
         bot_answered = q.get("result") == "answered"
-        with st.expander("What OpsMate answered" + (f" ({q['confidence_pct']}% confident)"
+        with st.expander("What iKnow answered" + (f" ({q['confidence_pct']}% confident)"
                                                    if q.get("confidence_pct") is not None else "")):
             st.markdown(q["answer"] or "")
             try:
@@ -364,13 +364,13 @@ def _sme_card(n, g, user):
                                            "Numbered steps work best: 1. ... 2. ...")
             b = st.columns(4)
             save = b[0].form_submit_button("✅ Save SME answer", type="primary")
-            ok = b[1].form_submit_button("👍 OpsMate's answer is right", disabled=not bot_answered)
+            ok = b[1].form_submit_button("👍 iKnow's answer is right", disabled=not bot_answered)
             sop = b[2].form_submit_button("📝 SOP update needed")
             drop = b[3].form_submit_button("🚫 Not a process question")
             try:
                 if save:
                     kb.sme_answer(g["ids"], g["region"], new_q, ans, user)
-                    st.toast("Saved - OpsMate will use this answer next time.", icon="✅")
+                    st.toast("Saved - iKnow will use this answer next time.", icon="✅")
                     st.rerun()
                 if ok:
                     kb.sme_confirm(g["ids"], user)
@@ -503,7 +503,7 @@ def _sme_live(region, user):
             if kb.get_chat(cid)["status"] == "closed":
                 st.rerun(scope="app")
         convo()
-        with st.expander("🔎 Look it up in OpsMate first"):
+        with st.expander("🔎 Look it up in iKnow first"):
             q = st.text_input("Search the SOPs", key=f"sme_lookup{cid}")
             if q.strip():
                 hits = kb.search(chat["region"], [q])[:3]
@@ -531,7 +531,7 @@ def _sme_live(region, user):
         st.divider()
         st.subheader("💾 Save answers from ended chats")
         st.caption("Tick the question/answer pairs worth keeping and correct the wording. Saved pairs become "
-                   "verified answers that OpsMate uses first next time. The full chat is kept either way.")
+                   "verified answers that iKnow uses first next time. The full chat is kept either way.")
     for c in review[:5]:
         pairs = kb.chat_pairs(c["id"])
         with st.container(border=True):
@@ -552,7 +552,7 @@ def _sme_live(region, user):
                 b1, b2 = st.columns(2)
                 if b1.form_submit_button("💾 Save ticked answers", type="primary"):
                     n = kb.save_chat_pairs(c["id"], chosen, user)
-                    st.toast(f"Saved {n} answer(s) - OpsMate will use them next time.", icon="✅")
+                    st.toast(f"Saved {n} answer(s) - iKnow will use them next time.", icon="✅")
                     st.rerun()
                 if b2.form_submit_button("Nothing to save"):
                     kb.save_chat_pairs(c["id"], [], user)
@@ -565,7 +565,7 @@ def _sme_history(region):
     find = c2.text_input("Search in chats", key="hist_find")
     c3.write("")
     c3.download_button("⬇ All chats to Excel", kb.chats_excel(None if lob == "All" else lob),
-                       file_name=f"OpsMate_SME_chats_{datetime.now():%Y-%m-%d}.xlsx", width="stretch")
+                       file_name=f"iKnow_SME_chats_{datetime.now():%Y-%m-%d}.xlsx", width="stretch")
     chats = kb.chat_history(None if lob == "All" else lob, find.strip(), limit=50)
     if not chats:
         st.caption("No chats yet.")
@@ -585,7 +585,7 @@ def _sme_answers(region, user):
     if find.strip():
         rows = [r for r in rows if find.lower() in (r["question"] + " " + r["answer"]).lower()]
     st.caption(f"{len(rows)} verified answers in {lob}. Edit one when the process changes; switch it off "
-               "to stop OpsMate using it.")
+               "to stop iKnow using it.")
     for r in rows[:50]:
         with st.container(border=True):
             state = "🟢 in use" if r.get("active", 1) else "⚪ switched off"
@@ -613,7 +613,7 @@ def _sme_answers(region, user):
 # ---------------------------------------------------------------------------
 def gaps(region, user):
     st.header("Knowledge Gaps")
-    st.caption("Questions OpsMate could not answer, where documents disagree, or that staff marked 👎 - "
+    st.caption("Questions iKnow could not answer, where documents disagree, or that staff marked 👎 - "
                "grouped by similar wording, most-asked first. Fix these to improve the process.")
     c1, c2, c3, c4 = st.columns([1, 1.6, 1.2, 1.3])
     reg = c1.selectbox("Region", ["All"] + config.REGIONS)
@@ -624,7 +624,7 @@ def gaps(region, user):
     c4.write("")
     c4.download_button("⬇ Export gaps to Excel", kb.export_excel(kb.questions_df(None if reg == "All" else reg),
                                                                 [g for g in groups if g["status"] in statuses]),
-                       file_name=f"OpsMate_gaps_{datetime.now():%Y-%m-%d}.xlsx", width="stretch")
+                       file_name=f"iKnow_gaps_{datetime.now():%Y-%m-%d}.xlsx", width="stretch")
     shown = [g for g in groups if g["status"] in statuses and (kind == "All" or g["type"] == kind)]
     k = st.columns(4)
     ui.kpi(k[0], "🕳️", len([g for g in groups if g["status"] not in ("Fixed", "Closed")]), "Open gaps")
@@ -675,7 +675,7 @@ def gaps(region, user):
 # ---------------------------------------------------------------------------
 def learned(region, user):
     st.header("Learned Answers")
-    st.caption("Verified answers come from the process team. Auto-learned answers are saved by OpsMate "
+    st.caption("Verified answers come from the process team. Auto-learned answers are saved by iKnow "
                f"when {config.AUTO_LEARN_MIN_VOTES} different people (or one admin) mark the same answer 👍; "
                "a 👎 switches an auto-learned answer off automatically.")
     t1, t2, t3 = st.tabs(["✅ Verified", "🧠 Auto-learned (staff 👍)", "➕ Add a Q&A"])
@@ -768,11 +768,21 @@ def settings(region, user):
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("<div class='om-section'>AI connection</div>", unsafe_allow_html=True)
-        st.write(f"Provider: **{llm.label()}**")
+        st.write(f"Answering now: **{llm.label()}**")
+        st.write(f"Order it tries: **{llm.chain_label()}**")
+        st.caption("If one AI fails (free quota used up, key rejected, Ollama closed) iKnow moves to the next "
+                   "one at once and skips the failed one for a few minutes. With no AI at all it still answers "
+                   "from the documents.")
         st.write("Meaning search: **" + llm.embed_label() + "**")
-        if llm.provider() == "local":
-            st.caption(f"Local AI at {config.OLLAMA_URL} · screenshots: "
-                       + (config.LOCAL_VISION_MODEL or "off (set LOCAL_VISION_MODEL)"))
+        alive = llm.local_alive()
+        st.write("Ollama (local AI): **" + (f"running at {config.OLLAMA_URL}" if alive else "not reachable") + "**"
+                 + (f" · model {config.LOCAL_MODEL}" if alive else ""))
+        if "local" in llm.providers():
+            st.caption("Screenshots with local AI: "
+                       + (config.LOCAL_VISION_MODEL or "off (set LOCAL_VISION_MODEL, e.g. gemma3:4b)"))
+        elif not alive:
+            st.caption("Ollama works only when iKnow runs on the SAME computer or company server as Ollama "
+                       "(START_APP.bat). The Streamlit Cloud app cannot reach Ollama on your laptop.")
         if (config.MEANING_SEARCH or "").lower() == "builtin" and not llm.builtin_available():
             st.warning("MEANING_SEARCH is 'builtin' but the fastembed library is not installed "
                        "(check requirements.txt).")
@@ -794,10 +804,11 @@ def settings(region, user):
             st.warning("Gemini free tier: Google may use the content you send to improve its products. "
                        "Use sample or non-confidential SOPs on the free tier; for real company SOPs use a "
                        "paid key or company-approved AI.")
-        st.caption("Add keys in Streamlit → App → Settings → Secrets:  GEMINI_API_KEY = \"...\"  "
-                   "(or ANTHROPIC_API_KEY). On a laptop:  setx GEMINI_API_KEY \"...\"  ·  "
-                   "No key: AI_PROVIDER = \"local\" (Ollama on the same machine) and/or "
-                   "MEANING_SEARCH = \"builtin\".")
+        st.caption("Add keys in Streamlit → App → Settings → Secrets (each on ONE line):  "
+                   "GEMINI_API_KEY = \"...\"  ·  ANTHROPIC_API_KEY = \"...\" (optional backup)  ·  "
+                   "MEANING_SEARCH = \"builtin\" (meaning search with no key and no quota)  ·  "
+                   "AI_BACKUP = \"auto\" | \"on\" | \"off\".  Laptop with Ollama: AI_PROVIDER = \"local\" "
+                   "(SOPs never leave the laptop) or keep \"auto\" to use Ollama only as backup.")
     with c2:
         st.markdown("<div class='om-section'>Standard replies</div>", unsafe_allow_html=True)
         st.write("**When no answer is found:**")
@@ -843,7 +854,7 @@ def backup_settings(user):
             st.session_state["backup_bytes"] = kb.make_backup()
         if st.session_state.get("backup_bytes"):
             st.download_button("⬇ Download backup (.zip)", st.session_state["backup_bytes"], type="primary",
-                               file_name=f"OpsMate_backup_{datetime.now():%Y-%m-%d_%H%M}.zip", mime="application/zip")
+                               file_name=f"iKnow_backup_{datetime.now():%Y-%m-%d_%H%M}.zip", mime="application/zip")
     with c2:
         up = st.file_uploader("Restore from a backup .zip", type=["zip"], key="restore_zip")
         if up is not None and st.button("Restore now (replaces current library)", key="dorestore"):

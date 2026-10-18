@@ -1,5 +1,5 @@
 """
-knowledge.py - OpsMate's knowledge base and answer engine.
+knowledge.py - iKnow's knowledge base and answer engine.
 
   * stores documents per region (SQLite + files on disk), reads PDF/Word/PPT/Excel,
     tables, and (with AI) screenshots/images/scans inside documents
@@ -437,7 +437,7 @@ def add_document(region, doc_type, title, filename, data: bytes, uploaded_by, ve
     bad += [f"{loc} (picture): {', '.join(privacy.real_cards(c))}" for loc, c in image_cards
             if privacy.real_cards(c)]
     if bad:
-        raise ValueError("Not uploaded - this file contains payment card numbers, which OpsMate must not "
+        raise ValueError("Not uploaded - this file contains payment card numbers, which iKnow must not "
                          "store. Remove or mask them in the file and upload again. Found in: "
                          + "; ".join(bad[:5]))
     parts = [(loc, privacy.mask(txt)) for loc, txt in parts]
@@ -464,6 +464,9 @@ def add_document(region, doc_type, title, filename, data: bytes, uploaded_by, ve
     for loc, txt in parts:
         for piece in ([txt] if "Table" in loc or "image" in loc else chunk_text(txt)):
             if len(piece) < 40 and len(parts) > 1:      # skip title-only fragments
+                continue
+            rest = piece.replace(loc.rsplit(" - ", 1)[-1] if " - Table" in loc else loc, "").strip(" \n-:")
+            if len(rest) < 15 and len(parts) > 1:        # piece is only its own heading (e.g. before the first Q:)
                 continue
             pieces.append((loc, piece))
 
@@ -597,7 +600,7 @@ def _sample_sub_lob(region, name):
 
 
 # ---------------------------------------------------------------------------
-# Pictures inside documents - kept so OpsMate can SHOW them with an answer
+# Pictures inside documents - kept so iKnow can SHOW them with an answer
 # (finding answers inside pictures still needs the AI key; showing them does not)
 # ---------------------------------------------------------------------------
 def _image_location(loc):
@@ -773,7 +776,7 @@ def document_text(doc_id, limit=6000):
 
 
 def popular_questions(region, limit=6):
-    """Most-asked questions that OpsMate answered well - used for 'Try asking'."""
+    """Most-asked questions that iKnow answered well - used for 'Try asking'."""
     with _conn() as con:
         rows = con.execute(
             "SELECT question, COUNT(*) n FROM questions WHERE region=? AND result='answered' "
@@ -784,7 +787,7 @@ def popular_questions(region, limit=6):
 
 def suggested_questions(region, sub_lob=None, limit=6):
     """'Try asking' for the selected LOB tab and sub-LOB chip:
-    1) questions staff asked most that OpsMate answered well, 2) questions written in the documents
+    1) questions staff asked most that iKnow answered well, 2) questions written in the documents
     themselves ('Q: ...' lines, '... - steps' sections). Selected sub-LOB first, then the LOB, then GLOBAL."""
     out = []
 
@@ -952,6 +955,121 @@ def definition_term(question):
     return term if 0 < len(term.split()) <= 3 else None
 
 
+# ---- Exact look-ups: "BLR airport", "code for Heathrow", "capital of Denmark", "airlines of Sweden" ----
+# Lists of one-line entries (airports, countries, codes) are long; word search finds the LIST, this
+# finds the LINE. Used when the question names a thing and asks for one fact about it.
+_LOOKUP_INTENT = {"airport": "airport", "airports": "airport", "code": "code", "codes": "code",
+                  "capital": "capital", "currency": "currency", "currencies": "currency",
+                  "airline": "airline", "airlines": "airline", "carrier": "airline", "carriers": "airline",
+                  "station": "station", "stations": "station", "country": "country", "city": "city",
+                  "decode": "code", "encode": "code", "iata": "code", "card": "card", "rail": "rail",
+                  "train": "rail", "trains": "rail", "tc": "tc", "area": "tc", "zone": "tc"}
+_LOOKUP_FILL = set("""which what whats what's is are the a an of for in to from does do fly flies flying
+where located main major name names full form stand stands tell me please show give list all its
+belongs belong under falls fall""".split())
+_INTENT_IN_LINE = {"airport": r"airport|intl|\b[A-Z]{3} - ", "code": r"\b[A-Z0-9]{2,3}\b",
+                   "capital": r"capital", "currency": r"currency|\([A-Z]{3}\)", "airline": r"airline",
+                   "station": r"station|central|hbf|gare|\bst\b", "country": r".", "city": r"city|\b[A-Z]{3} - ",
+                   "card": r"card|\b(VI|CA|AX|DC|JC|TP|DS)\b", "rail": r"rail|train|bahn|sncf|trenitalia|\bsj\b",
+                   "tc": r"\bTC ?[123]\b|tc area"}
+
+
+def _lookup_terms(question):
+    """('BLR airport') -> (['BLR'], {'airport'}); None when it is not a look-up question."""
+    words = re.findall(r"[A-Za-z0-9][A-Za-z0-9'&.-]*", question or "")
+    if not words or len(words) > 9:
+        return None
+    intents = {_LOOKUP_INTENT[w.lower()] for w in words if w.lower() in _LOOKUP_INTENT}
+    terms = [w.strip(".'") for w in words if w.lower() not in _LOOKUP_INTENT and w.lower() not in _LOOKUP_FILL
+             and w.lower() not in STOP_WORDS]
+    code_only = len(words) <= 2 and any(re.fullmatch(r"[A-Z]{3}", w) for w in words)
+    if not terms or len(terms) > 3 or not (intents or code_only):
+        return None
+    return terms, intents
+
+
+def _term_rx(t):
+    if re.fullmatch(r"[A-Za-z]{2,3}", t):                         # a code: BLR / blr -> exactly BLR
+        alts = [re.escape(t.upper())]
+    else:
+        alts = [re.escape(t)]
+    syn = brain.SYNONYMS.get(t.lower(), "")
+    if syn:                                                       # amex -> 'american express' or AX
+        codes = [w for w in syn.split() if re.fullmatch(r"[A-Z]{2,3}", w)]
+        rest = " ".join(w for w in syn.split() if w not in codes)
+        alts += ([re.escape(rest)] if rest else []) + [re.escape(c) for c in codes]
+    return _CaseMix(alts)
+
+
+class _CaseMix:
+    """Codes match only in capitals (BLR, AX); words / names in any case."""
+    def __init__(self, alts):
+        self.rx = [re.compile(rf"\b{a}\b") if re.fullmatch(r"[A-Z0-9]{2,3}", a.replace("\\", ""))
+                   else re.compile(rf"\b{a}s?\b", re.I) for a in alts]
+
+    def search(self, text):
+        return any(r.search(text) for r in self.rx)
+
+    def match(self, text):
+        return any(r.match(text) for r in self.rx)
+
+
+def line_lookup(region, question, sub_lob=None, limit=4):
+    """Returns {'lines': [...], 'item': source piece, 'strong': bool} or None."""
+    lt = _lookup_terms(question)
+    if not lt:
+        return None
+    terms, intents = lt
+    rxs = [_term_rx(t) for t in terms]
+    found = []
+    for it in _candidates(region):
+        if it["kind"] != "doc":
+            continue
+        loc = it.get("location", "")
+        for raw in it["text"].splitlines():
+            line = re.sub(r"^\s*(A\s*:\s*|[-•*]\s*)", "", raw).strip()
+            if not line or len(line) > 400 or line.lower().startswith("q:"):
+                continue
+            if not all(r.search(line) or r.search(loc) for r in rxs):
+                continue
+            if not all(r.search(line) for r in rxs[:1]):
+                continue
+            s = 1.0
+            head = line[:40]
+            if any(r.match(head) for r in rxs):                     # the entry FOR this thing: "BLR - ..."
+                s += 1.0
+            for i in intents:
+                if re.search(_INTENT_IN_LINE[i], line, 0 if i in ("code", "tc") else re.I) or i in loc.lower():
+                    s += 0.6
+                else:
+                    s -= 0.4
+            strong = s >= 2.0 + 0.6 * len(intents) - 0.01          # entry line + every asked fact in it
+            s = s * lob_factor(it, region, sub_lob) - len(line) / 3000
+            found.append((s, line, it, strong))
+    if not found:
+        return None
+    found.sort(key=lambda x: -x[0])
+    best = found[0][0]
+    if best < 1.5:
+        return None
+    lines, seen = [], set()
+    for s, line, it, _ in found:
+        if s < best - 0.35 or len(lines) >= limit:
+            break
+        if line.lower() not in seen:
+            seen.add(line.lower())
+            lines.append(line)
+    return {"lines": lines, "item": found[0][2], "strong": found[0][3], "terms": terms, "intents": intents}
+
+
+def lookup_satisfied(answer, lk):
+    """Does an answer already give what the look-up asks for (the thing AND the fact, at the start)?"""
+    head = (answer or "")[:300]
+    return (all(_term_rx(t).search(head) for t in lk["terms"])
+            and all(re.search(_INTENT_IN_LINE[i], head, 0 if i in ("code", "tc") else re.I)
+                    for i in lk["intents"]))
+
+
 def _defines(location, term):
     """True when a section heading defines the term: 'AGM - ...', 'AGM: ...', 'AGM', 'What is AGM?'."""
     loc = re.sub(r"\s-\s(Table \d+|image \d+)$", "", (location or "").lower()).strip()
@@ -960,7 +1078,7 @@ def _defines(location, term):
 
 
 def search(region, queries, k=config.CANDIDATES, fmt="short", query_vec=None, sub_lob=None, all_regions=False,
-           per_doc=None):
+           per_doc=None, raw=None):
     """Search ALL documents with every phrasing of the question.
     score = word match (and, with Gemini, meaning match), adjusted by staff feedback
     and by the selected line of business (its documents rank first).
@@ -1002,11 +1120,29 @@ def search(region, queries, k=config.CANDIDATES, fmt="short", query_vec=None, su
         qsim = cosine_similarity(qv.transform(queries), lq).max(axis=0)
         for i, sim in zip(learned_idx, qsim):
             items[i]["qsim"] = float(sim)
+    # FAQ pieces in documents ("Q: ...") whose question is worded like this one also rank first
+    faq_idx = [i for i, it in enumerate(items) if it["kind"] == "doc" and it["text"].lstrip().startswith("Q:")]
+    if faq_idx:
+        def _qn(t):                              # lower case, no punctuation, no a / an / the
+            return re.sub(r"\b(a|an|the)\b", " ", re.sub(r"[^\w\s]", " ", (t or "").lower())).split()
+        fq = [" ".join(_qn(re.sub(r"^\s*Q\s*:\s*", "", items[i]["text"].lstrip().split("\n", 1)[0]))) or "-"
+              for i in faq_idx]
+        # the agent's own wording counts too (search words have synonyms added: 'uk' -> 'united kingdom')
+        qq = [" ".join(_qn(q)) or "-" for q in queries + ([raw] if raw else [])]
+        fv = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5)).fit(fq + qq)
+        fsim = cosine_similarity(fv.transform(qq), fv.transform(fq)).max(axis=0)
+        for i, sim in zip(faq_idx, fsim):
+            items[i]["faqsim"] = float(sim)
     term = definition_term(queries[0])
     for idx, item in enumerate(items):
         boost = 1.0
         if term and _defines(item.get("location", ""), term):
             boost *= config.DEFINITION_BOOST     # "what is AGM" -> the passage that defines AGM, not one that only uses it
+        fs = item.get("faqsim", 0)
+        if (fs >= config.FAQ_MATCH_SIM and (not sub_lob or item.get("sub_lob") == sub_lob)
+                and brain.coverage(raw or queries[0], item["text"]) >= 0.99):   # ...and it covers every key word
+            # the agent asked (almost) exactly an FAQ question of the document - the closer, the higher
+            boost *= config.FAQ_MATCH_BOOST * (1 + (fs - config.FAQ_MATCH_SIM))
         if item["kind"] == "learned":
             boost = config.AUTO_LEARNED_BOOST if item.get("auto") else config.LEARNED_BOOST
             if item.get("qsim", 0) >= 0.6:
@@ -1070,7 +1206,9 @@ def expand_sections(hits, limit=3000):
                     line = line.strip()
                     if line and not any(line in l or l in line for l in lines[-6:] if len(l) > 20):
                         lines.append(line)
-            out.append(dict(h, text="\n".join(lines)[:limit]))
+            merged = "\n".join(lines)[:limit]
+            # the joined piece is searched/checked with ALL its words, not only the first piece's
+            out.append(dict(h, text=merged, search=f"{h['title']} {h['location']} {h['location']} {merged}"))
     return out
 
 
@@ -1114,7 +1252,7 @@ def clarify_options(region, question, queries, sub_lob=None, query_vec=None, anc
         return None                                        # weak match: nothing to choose between
     close = [h for h in hits if h["score"] >= top["score"] * config.CLARIFY_CLOSE
              and h["kind"] == "doc" and brain.coverage(st_, h.get("search", h["text"])) >= config.CLARIFY_MIN_COVER]
-    if anchor is not None:                                 # the passage OpsMate was about to answer from
+    if anchor is not None:                                 # the passage iKnow was about to answer from
         close = [anchor] + [h for h in close if h.get("key") != anchor.get("key")]
     ql = " " + question.lower() + " "
     for group, names in config.CLARIFY_GROUPS.items():
@@ -1192,9 +1330,12 @@ def ask(region, question, asked_by, image=None, sub_lob=None, clarify=True):
         except llm.AIError as e:
             meta["notes"].append(str(e))
 
-    state = {"fixed": fixed, "changes": changes, "fmt": fmt, "queries": queries}
+    state = {"fixed": fixed, "changes": changes, "fmt": fmt, "queries": queries, "raw": fixed}
 
     # --- Not clear which GDS / process? Ask first (one click), then answer -------
+    # "what is X?" asks for a meaning, which does not depend on the GDS - never ask "Amadeus or Sabre?" for it
+    if definition_term(fixed):
+        clarify = False
     if clarify and not image:
         opts = clarify_options(region, fixed, queries, sub_lob=sub_lob, query_vec=qvec)
         if opts:
@@ -1207,7 +1348,7 @@ def ask(region, question, asked_by, image=None, sub_lob=None, clarify=True):
     def find(all_regions):
         """Search (this LOB, or every LOB) and decide: answered / conflict / not_found."""
         fixed, changes, fmt, queries = state["fixed"], state["changes"], state["fmt"], list(state["queries"])
-        hits = search(region, queries, fmt=fmt, query_vec=qvec, sub_lob=sub_lob, all_regions=all_regions)
+        hits = search(region, queries, raw=state.get("raw"), fmt=fmt, query_vec=qvec, sub_lob=sub_lob, all_regions=all_regions)
         best = hits[0] if hits else None
         weak = (not best) or (best["lex"] < config.CONF_MEDIUM and (best["sem"] or 0) < config.SEM_MEDIUM)
         if use_ai and (weak or image) and qvec is None and not all_regions:
@@ -1217,7 +1358,7 @@ def ask(region, question, asked_by, image=None, sub_lob=None, clarify=True):
                 fmt = u["format"] if fmt == "short" else fmt
                 if u["corrected"].lower() != question.lower():
                     fixed, changes = u["corrected"], changes or [("", "")]
-                hits = search(region, queries, fmt=fmt, query_vec=qvec, sub_lob=sub_lob)
+                hits = search(region, queries, raw=state.get("raw"), fmt=fmt, query_vec=qvec, sub_lob=sub_lob)
                 meta["layers"].append("AI rephrase")
                 state.update(fixed=fixed, changes=changes, fmt=fmt, queries=queries)
             except llm.AIError as e:
@@ -1246,6 +1387,10 @@ def ask(region, question, asked_by, image=None, sub_lob=None, clarify=True):
                                     " › ".join(x for x in (region, sub_lob) if x))
                 out["mode"] = "ai"
                 meta["layers"].append("AI compare + answer")
+                chain, used_ai = llm.providers(), llm.last_used.get("provider")
+                if used_ai and chain and used_ai != chain[0]:
+                    meta["notes"].append(f"Answered by the backup AI ({llm.name_of(used_ai)}) - "
+                                         f"{llm.name_of(chain[0]).split(' (')[0]} is paused for a few minutes.")
                 out["result"], conf = a["status"], a["confidence"]
                 out["answer"], out["important"], out["conflict_text"] = a["answer"], a["important"], a["conflict"]
                 if out["result"] == "answered" and conf == "low":
@@ -1264,7 +1409,7 @@ def ask(region, question, asked_by, image=None, sub_lob=None, clarify=True):
             again by words first, so a quota problem can never hide a strong documented answer."""
             h, b, c = hits, best, cover
             if qvec is not None:
-                h = expand_sections(search(region, queries, fmt=fmt, query_vec=None, sub_lob=sub_lob,
+                h = expand_sections(search(region, queries, raw=state.get("raw"), fmt=fmt, query_vec=None, sub_lob=sub_lob,
                                            all_regions=all_regions))
                 for x in h[:5]:
                     x["cover"] = brain.coverage(st, x.get("search", x["text"]))
@@ -1319,6 +1464,23 @@ def ask(region, question, asked_by, image=None, sub_lob=None, clarify=True):
                                  f"documents - check it applies to {region} before using it.")
             meta["layers"].append("searched other LOBs")
             r = alt
+    # --- Exact look-up ("BLR airport", "capital of Denmark"): the one matching LINE of a long list ---
+    lk = None if image else line_lookup(region, state["raw"], sub_lob)
+    if lk:
+        b0 = r["best"]
+        curated = bool(b0 and r["result"] == "answered" and (b0["kind"] == "learned" or b0.get("faqsim", 0) >= 0.8))
+        ans = (r["answer"] or "").lower()
+        use = (r["result"] != "answered") or (
+            r["mode"] == "documents" and not curated and lk["lines"][0].lower()[:80] not in ans
+            and (lk["strong"] or not lookup_satisfied(r["answer"], lk)))
+        if use and (r["mode"] == "documents" or r["result"] != "answered"):
+            text = "\n".join(lk["lines"])
+            top = dict(lk["item"], text=text, lex=max(lk["item"].get("lex") or 0, config.CONF_HIGH),
+                       score=max(lk["item"].get("score") or 0, (b0 or {}).get("score", 0) * 1.01), cover=1.0)
+            r.update(result="answered", answer=text, mode="documents", important="", conflict_pair=None,
+                     hits=[top] + [h for h in r["hits"] if h.get("key") != top.get("key")],
+                     best=top, cover=1.0, conf="high" if lk["strong"] else "medium")
+            meta["layers"].append("exact line look-up")
     result, answer, important = r["result"], r["answer"], r["important"]
     conflict_pair, conflict_text, mode = r["conflict_pair"], r["conflict_text"], r["mode"]
     hits, best, cover, conf = r["hits"], r["best"], r["cover"], r["conf"]
@@ -1387,7 +1549,7 @@ def ask(region, question, asked_by, image=None, sub_lob=None, clarify=True):
 # ===========================================================================
 
 def give_feedback(qid, helpful: bool, comment="", trusted=False):
-    """👍 / 👎 from staff. This is where OpsMate learns by itself."""
+    """👍 / 👎 from staff. This is where iKnow learns by itself."""
     with _conn() as con:
         q = con.execute("SELECT * FROM questions WHERE id=?", (qid,)).fetchone()
         if not q:
@@ -1437,7 +1599,7 @@ def _auto_learn(q, question, trusted=False):
     with _conn() as con:
         con.execute("INSERT INTO learned (region, question, answer, added_by, added_at, from_question,"
                     " source, active, votes, embedding) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                    (q["region"], question, q["answer"], "OpsMate (staff 👍)", _now(), q["id"],
+                    (q["region"], question, q["answer"], "iKnow (staff 👍)", _now(), q["id"],
                      "auto", 1, 1, vec))
 
 
@@ -1544,11 +1706,11 @@ def _close(ids, sme, status, gap):
 
 
 def sme_confirm(ids, sme):
-    """The SME checked OpsMate's answer and it is right: keep it as a verified answer."""
+    """The SME checked iKnow's answer and it is right: keep it as a verified answer."""
     with _conn() as con:
         q = con.execute("SELECT * FROM questions WHERE id=?", (ids[0],)).fetchone()
     if not q or q["result"] != "answered":
-        raise ValueError("There is no OpsMate answer to confirm - please write the answer.")
+        raise ValueError("There is no iKnow answer to confirm - please write the answer.")
     sme_answer(ids, q["region"], re.sub(r"\s*\[screenshot\]$", "", q["question"]), q["answer"], sme)
 
 
@@ -1690,7 +1852,7 @@ def pick_up_chat(chat_id, sme):
         cur = con.execute("UPDATE sme_chats SET status='active', sme=?, picked_at=? WHERE id=? AND status='waiting'",
                           (sme, _now(), chat_id))
         if cur.rowcount:
-            _msg(con, chat_id, "OpsMate", "system", f"{sme} (SME) joined the chat.")
+            _msg(con, chat_id, "iKnow", "system", f"{sme} (SME) joined the chat.")
         return bool(cur.rowcount)
 
 
@@ -1700,7 +1862,7 @@ def close_chat(chat_id, by):
         return
     with _conn() as con:
         con.execute("UPDATE sme_chats SET status='closed', closed_at=?, closed_by=? WHERE id=?", (_now(), by, chat_id))
-        _msg(con, chat_id, "OpsMate", "system", f"Chat ended by {by}.")
+        _msg(con, chat_id, "iKnow", "system", f"Chat ended by {by}.")
         replied = con.execute("SELECT COUNT(*) FROM sme_messages WHERE chat_id=? AND role='sme'", (chat_id,)).fetchone()[0]
         if not replied:
             # nobody answered: the question goes to the SME Desk so it is not lost
@@ -1872,7 +2034,7 @@ def set_learned(lid, active=None, delete=False, make_verified=False, admin=""):
 
 
 # ===========================================================================
-# 7. KNOWLEDGE GAPS  (questions OpsMate could not answer well)
+# 7. KNOWLEDGE GAPS  (questions iKnow could not answer well)
 # ===========================================================================
 
 GAP_STATUSES = ["Open", "SOP update needed", "In progress", "Possibly answered", "Fixed", "Closed"]
@@ -2124,10 +2286,10 @@ def restore_backup(data: bytes):
     try:
         z = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile as e:
-        raise ValueError("This is not an OpsMate backup file (.zip).") from e
+        raise ValueError("This is not an iKnow backup file (.zip).") from e
     names = z.namelist()
     if BACKUP_DB_NAME not in names:
-        raise ValueError("This zip has no knowledge.db - it is not an OpsMate backup.")
+        raise ValueError("This zip has no knowledge.db - it is not an iKnow backup.")
     files = []
     for n in names:
         p = PurePosixPath(n)
@@ -2143,7 +2305,7 @@ def restore_backup(data: bytes):
         with sqlite3.connect(tmp) as test:
             tables = {r[0] for r in test.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             if not {"documents", "chunks", "questions"} <= tables:
-                raise ValueError("The backup database is missing OpsMate tables.")
+                raise ValueError("The backup database is missing iKnow tables.")
             docs = test.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
         for n in files:
             (config.UPLOAD_DIR / PurePosixPath(n).name).write_bytes(z.read(n))

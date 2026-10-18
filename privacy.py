@@ -179,7 +179,7 @@ def mask_image(img_bytes):
         im = Image.open(io.BytesIO(img_bytes))
         im = ImageOps.exif_transpose(im).convert("RGB")      # also drops hidden photo data (EXIF)
     except Exception:                                        # noqa: BLE001
-        raise PrivacyError("This file is not a picture OpsMate can read.")
+        raise PrivacyError("This file is not a picture iKnow can read.")
     im.thumbnail((2400, 2400))
     scale = 2 if im.width < 1600 else 1                      # small text reads better when enlarged
     big = im.resize((im.width * scale, im.height * scale)) if scale > 1 else im

@@ -1,7 +1,7 @@
 """
-prompts.py - The instructions OpsMate gives the AI (Gemini or Claude).
+prompts.py - The instructions iKnow gives the AI (Gemini or Claude).
 
-Edit the wording here to change HOW OpsMate answers (tone, length, format).
+Edit the wording here to change HOW iKnow answers (tone, length, format).
 Placeholders in {curly brackets} are filled in automatically - keep them.
 Restart the app after saving.
 """
@@ -28,7 +28,7 @@ Reply with JSON only:
 # ---------------------------------------------------------------------------
 # LAYER 3 - Compare all sources and answer (main model, JSON only)
 # ---------------------------------------------------------------------------
-ANSWER_PROMPT = """You are OpsMate, the operations assistant for {region} travel-operations staff.
+ANSWER_PROMPT = """You are iKnow, the operations assistant for {region} travel-operations staff.
 Staff are busy and mid-task: give the crisp answer, not a paragraph.
 
 QUESTION: {question}
@@ -69,7 +69,7 @@ Reply with JSON only, no other text:
   "sources_used": [1, 2],
   "conflict": "<for conflict: one line per document saying what it says, e.g. 'S1 (Refund SOP): 7-10 days; S3 (FAQ): 14 days'>"
 }}
-Use confidence "low" when you are unsure - OpsMate will then refer the agent to their supervisor.
+Use confidence "low" when you are unsure - iKnow will then refer the agent to their supervisor.
 """
 
 # ---------------------------------------------------------------------------

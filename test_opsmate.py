@@ -1,4 +1,4 @@
-"""OpsMate checks.  Run:  pip install pytest  then  pytest -q test_opsmate.py"""
+"""iKnow checks.  Run:  pip install pytest  then  pytest -q test_opsmate.py"""
 import io
 import zipfile
 
@@ -6,6 +6,8 @@ import pytest
 
 import config
 import knowledge as kb
+
+_REAL_AI_ON = kb.llm.ai_on
 
 
 @pytest.fixture(autouse=True)
@@ -161,11 +163,9 @@ def test_quota_error_pauses_ai_and_answers_from_documents(monkeypatch):
     def quota(*a, **k):
         calls["n"] += 1
         raise RuntimeError("429 RESOURCE_EXHAUSTED: quota exceeded")
-    monkeypatch.setattr(kb.llm, "provider", lambda: "gemini")
-    monkeypatch.setattr(kb.llm, "ai_on", lambda: True)
+    _only_gemini(monkeypatch)
     monkeypatch.setattr(kb.llm, "_generate", lambda *a, **k: kb.llm._retry(quota))
     monkeypatch.setattr(kb.llm.time, "sleep", lambda s: None)
-    monkeypatch.setattr(kb.llm, "_paused_until", {"generate": 0.0, "embed": 0.0})
     r = kb.ask("NORAM", "list of amadeus commands", "tester")
     assert r["result"] == "answered" and "AN15NOVDELBLR" in r["answer"]
     assert kb.llm.paused("generate") and calls["n"] >= 1
@@ -555,3 +555,128 @@ def test_screenshots_refused_when_they_cannot_be_checked(monkeypatch):
     assert len(kb.chat_messages(cid)) == 1                                   # nothing saved
     r = kb.ask("NORAM", "what is TTP", "a1", image=_card_screenshot(["x"]))
     assert any("switched off" in n for n in r["meta"]["notes"])
+
+
+# ---------------------------------------------------------------------------
+# FAQ documents and lists (General Travel Reference v2 style)
+# ---------------------------------------------------------------------------
+def _faq_doc():
+    import docx
+    d = docx.Document()
+    d.add_heading("FAQ - Basics for agents", level=2)
+    d.add_paragraph("Q: What is a PNR?")
+    d.add_paragraph("A: A PNR (Passenger Name Record) is the booking file in the GDS with a 6-character record locator.")
+    d.add_paragraph("Q: How to split a PNR in Sabre?")
+    d.add_paragraph("A: D + passenger number (D1), then 6 and F to file the new PNR, then 6 and E on the original PNR.")
+    d.add_paragraph("Q: How to split a PNR in Amadeus?")
+    d.add_paragraph("A: SP + passenger number (SP2), then EF to file the new PNR, then ER on the original PNR.")
+    d.add_heading("Croatia airport codes - capital of Croatia: Zagreb", level=3)
+    d.add_paragraph("Croatia: capital Zagreb; currency Euro (EUR); IATA TC area 2 (TC2, Europe); major (main) airlines: Croatia Airlines.")
+    for code, city in [("ZAG", "Zagreb"), ("SPU", "Split"), ("DBV", "Dubrovnik"), ("PUY", "Pula"), ("RJK", "Rijeka"), ("ZAD", "Zadar")] * 3:
+        d.add_paragraph(f"{code} - {city} - {city} Airport - Croatia (capital: Zagreb)")
+    buf = io.BytesIO(); d.save(buf)
+    kb.add_document("GLOBAL", "Reference", "Test reference", "ref.docx", buf.getvalue(), "admin")
+
+
+def test_faq_question_wording_wins_and_whole_answer_is_shown():
+    _faq_doc()
+    for q in ("What is a PNR?", "what is pnr"):
+        r = kb.ask("NORAM", q, "t")
+        assert r["result"] == "answered" and r["answer"].startswith("A PNR (Passenger Name Record)")
+    r = kb.ask("NORAM", "how to split a pnr in amadeus", "t")
+    assert "SP + passenger number" in r["answer"] and "EF to file" in r["answer"]   # full answer, not a fragment
+    assert r["result"] == "answered"
+
+
+def test_heading_only_pieces_are_skipped_and_lists_show_matching_lines():
+    _faq_doc()
+    with kb._conn() as con:
+        texts = [r[0] for r in con.execute("SELECT text FROM chunks c JOIN documents d ON d.id=c.doc_id WHERE d.title='Test reference'")]
+    assert not any(t.strip() in ("FAQ - Basics for agents",) for t in texts)
+    r = kb.ask("NORAM", "currency of Croatia", "t")
+    assert r["result"] == "answered" and "Euro (EUR)" in r["answer"]
+    r = kb.ask("NORAM", "airport code of Dubrovnik", "t")
+    assert r["answer"].lstrip("- ").startswith("DBV")
+
+
+def _only_gemini(monkeypatch, claude=""):
+    monkeypatch.setattr(config, "AI_PROVIDER", "auto")
+    monkeypatch.setattr(config, "AI_BACKUP", "auto")
+    monkeypatch.setattr(config, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(config, "ANTHROPIC_API_KEY", claude)
+    monkeypatch.setattr(config, "OLLAMA_URL", "http://127.0.0.1:9")      # nothing listens here
+    monkeypatch.setattr(kb.llm, "_probe", {"at": 0.0, "url": "", "ok": False})
+    monkeypatch.setattr(kb.llm, "_paused_until", {"generate": 0.0, "embed": 0.0})
+    monkeypatch.setattr(kb.llm, "ai_on", _REAL_AI_ON)
+
+
+def test_backup_ai_answers_when_first_ai_fails(monkeypatch):
+    """Gemini quota used up -> Claude answers at once; Gemini is skipped for 5 minutes;
+    when both fail, the documents still answer."""
+    _only_gemini(monkeypatch, claude="test-claude")
+    llm = kb.llm
+    assert llm.providers() == ["gemini", "claude"] and llm.chain_label() == "Gemini → Claude → documents"
+    calls = []
+
+    def fake(p, *a, **k):
+        calls.append(p)
+        if p == "gemini":
+            raise llm.AIError(llm.QUOTA_TEXT)
+        return "backup says hi"
+    monkeypatch.setattr(llm, "_generate", fake)
+    assert llm.generate("hi") == "backup says hi" and calls == ["gemini", "claude"]
+    assert llm.last_used["provider"] == "claude" and llm.provider() == "claude"
+    assert "backup" in llm.label() and not llm.paused("generate")
+    calls.clear()
+    llm.generate("again")
+    assert calls == ["claude"]                                   # paused Gemini is not retried
+    monkeypatch.setattr(config, "AI_BACKUP", "off")
+    assert llm.providers() == ["gemini"]
+    monkeypatch.setattr(config, "AI_BACKUP", "auto")
+    monkeypatch.setattr(llm, "_generate", lambda p, *a, **k: (_ for _ in ()).throw(llm.AIError(llm.KEY_TEXT)))
+    monkeypatch.setattr(llm, "_paused_until", {"generate": 0.0, "embed": 0.0})
+    r = kb.ask("NORAM", "list of amadeus commands", "tester")
+    assert r["result"] == "answered" and "AN15NOVDELBLR" in r["answer"]
+    assert llm.paused("generate")                                # both keys paused -> documents
+
+
+def test_gemini_tries_its_second_model_before_the_backup(monkeypatch):
+    _only_gemini(monkeypatch)
+    llm = kb.llm
+    used = []
+
+    class Fake:
+        class models:
+            @staticmethod
+            def generate_content(model, contents, config):
+                used.append(model)
+                if model == llm.config.GEMINI_MODEL:
+                    raise RuntimeError("429 RESOURCE_EXHAUSTED")
+                return type("R", (), {"text": "from fast model"})()
+    monkeypatch.setattr(llm, "_gemini_client", lambda: Fake)
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    assert llm.generate("hi") == "from fast model"
+    assert used[-1] == config.GEMINI_FAST_MODEL and config.GEMINI_MODEL in used
+
+
+def test_local_first_never_sends_to_cloud_unless_backup_on(monkeypatch):
+    _only_gemini(monkeypatch)
+    monkeypatch.setattr(config, "AI_PROVIDER", "local")
+    assert kb.llm.providers() == ["local"]                       # SOPs stay on your network
+    monkeypatch.setattr(config, "AI_BACKUP", "on")
+    assert kb.llm.providers() == ["local", "gemini"]
+    monkeypatch.setattr(config, "AI_PROVIDER", "off")
+    assert kb.llm.providers() == [] and not kb.llm.ai_on()
+
+
+def test_exact_line_lookup_finds_one_entry_in_a_long_list():
+    lines = ["Airports of India"] + [f"{c} - City {i} - Intl {i} - State, India" for i, c in
+                                     enumerate(["AAA", "BBB", "CCC", "DDD", "EEE", "FFF", "GGG"])]
+    lines += ["BLR - Bengaluru (Bangalore) - Kempegowda Intl - Karnataka, India",
+              "Card type codes in the GDS: VI Visa, CA Mastercard, AX American Express, DC Diners Club."]
+    kb.add_document("GLOBAL", "Reference", "Codes", "codes.txt", "\n".join(lines).encode(), "admin")
+    r = kb.ask("NORAM", "BLR airport", "t", clarify=False)
+    assert r["result"] == "answered" and r["answer"].startswith("BLR - Bengaluru")
+    r = kb.ask("NORAM", "card code for amex", "t", clarify=False)       # 'amex' is not 'corrected' to another word
+    assert r["result"] == "answered" and "AX American Express" in r["answer"]
+    assert kb._lookup_terms("how to issue a ticket") is None                # normal questions are untouched

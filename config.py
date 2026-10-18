@@ -1,12 +1,12 @@
 """
-config.py - All OpsMate settings in one place.
+config.py - All iKnow settings in one place.
 Change values here (or in Streamlit Secrets / environment variables).
 """
 import os
 from pathlib import Path
 
 
-# What happened when OpsMate read Streamlit Secrets - shown to admins so a format mistake is obvious.
+# What happened when iKnow read Streamlit Secrets - shown to admins so a format mistake is obvious.
 # state: "ok" | "missing" (no Secrets saved) | "error" (Secrets saved but could not be read)
 SECRETS_STATUS = {"state": "ok", "detail": ""}
 SECRET_SOURCE = {}            # setting name -> "environment" / "secrets" / "default" (never the value)
@@ -43,8 +43,8 @@ def _secret(name, default=""):
 
 
 # ---- App identity ---------------------------------------------------------
-APP_NAME = "OpsMate"
-TAGLINE = "Your AI Operations Companion"
+APP_NAME = "iKnow"
+TAGLINE = "Answers from our SOPs and experts"
 COMPANY_NAME = "Your Company"
 
 # ---- The two standard replies (edit the wording here) -----------------------
@@ -56,7 +56,7 @@ CONFLICT_TEXT = ("I found different answers to this question in more than one do
 # Each LOB is a tab above the chat; its sub-LOBs are the chips under the tab.
 # Questions search the selected LOB's documents (plus GLOBAL documents) first,
 # ranking the selected sub-LOB's documents highest. If nothing is found there,
-# OpsMate searches the other LOBs and says clearly where the answer came from.
+# iKnow searches the other LOBs and says clearly where the answer came from.
 # Sub-LOBs can be changed by admins in Settings (saved in the database).
 # Adding a NEW top-level LOB needs a change here (REGIONS and DEFAULT_LOBS).
 REGIONS = ["NORAM", "EUROPE", "APAC", "QBAY"]
@@ -128,14 +128,14 @@ def password_warning():
            "then Save and ⋮ → Reboot app.")
     if SECRETS_STATUS["state"] == "error":
         return (f"Streamlit Secrets could not be read - check the format: {SECRETS_STATUS['detail']}. "
-                "OpsMate is using the demo password admin123 until this is fixed. "
+                "iKnow is using the demo password admin123 until this is fixed. "
                 "A value split over two lines is the usual cause. " + fix)
     if SECRET_SOURCE.get("ADMIN_PASSWORD") in ("secrets", "environment"):
         return "ADMIN_PASSWORD in Secrets is still admin123. Change it to your own password, Save, then ⋮ → Reboot app."
     if SECRETS_STATUS["state"] == "missing":
         return "No Secrets are saved for this app, so the demo password admin123 is in use. " + fix
     return ("ADMIN_PASSWORD is not in Streamlit Secrets, so the demo password admin123 is in use. "
-            "If you just added it, ⋮ → Reboot app so OpsMate reads it. " + fix)
+            "If you just added it, ⋮ → Reboot app so iKnow reads it. " + fix)
 
 # ---- Demo mode ------------------------------------------------------------
 # Load sample_docs/ automatically when the knowledge base is empty (free hosting
@@ -154,11 +154,11 @@ CHUNK_OVERLAP = 150
 CANDIDATES = 8            # passages compared for each answer (from all documents)
 PER_DOC = 2               # max passages from one document -> answers mix documents
 LEARNED_BOOST = 1.25      # verified answers (written by the process team)
-AUTO_LEARNED_BOOST = 1.10 # answers OpsMate learned by itself from 👍 votes
+AUTO_LEARNED_BOOST = 1.10 # answers iKnow learned by itself from 👍 votes
 
 # Confidence without AI (word-match score of the best passage)
 CONF_HIGH = 0.22
-CONF_MEDIUM = 0.11        # below this OpsMate gives FALLBACK_TEXT instead of guessing
+CONF_MEDIUM = 0.11        # below this iKnow gives FALLBACK_TEXT instead of guessing
 # Confidence with Gemini semantic search (cosine similarity of the best passage)
 SEM_HIGH = 0.72
 SEM_MEDIUM = 0.60
@@ -178,17 +178,23 @@ AUTO_LEARN_MIN_VOTES = 2  # 👍 from this many DIFFERENT people before an answe
 FEEDBACK_SIMILARITY = 0.55  # how similar a new question must be to reuse past 👍/👎
 
 # ---- AI providers ----------------------------------------------------------
-# OpsMate works with NO key (free, offline). Add ONE key to turn on AI:
+# iKnow works with NO key (free, offline). Add ONE key to turn on AI:
 #   Gemini (free tier available): GEMINI_API_KEY  -> also gives semantic search
 #   Claude (paid):                ANTHROPIC_API_KEY
 # Streamlit Cloud: App -> Settings -> Secrets. Laptop: setx GEMINI_API_KEY "..."
 GEMINI_API_KEY = _secret("GEMINI_API_KEY", "")
 ANTHROPIC_API_KEY = _secret("ANTHROPIC_API_KEY", "")
 AI_PROVIDER = _secret("AI_PROVIDER", "auto")   # auto | gemini | claude | local | off
+# Backup AI when the first one fails (quota used up, key rejected, Ollama closed):
+#   auto = cloud first -> other cloud key, then Ollama if it is running; local first -> no cloud
+#   on   = use every AI that is set up (also Gemini/Claude as backup for local)
+#   off  = only AI_PROVIDER
+# Whatever happens, iKnow still answers from the documents when no AI works.
+AI_BACKUP = _secret("AI_BACKUP", "auto")
 
 # ---- Local AI (no key, nothing leaves your machine / company network) ---------
 # Needs Ollama (free, official installer ONLY from https://ollama.com) running on the
-# same laptop/server as OpsMate. Then: ollama pull qwen2.5:7b  and  ollama pull nomic-embed-text
+# same laptop/server as iKnow. Then: ollama pull qwen2.5:7b  and  ollama pull nomic-embed-text
 # Secrets / environment:  AI_PROVIDER = "local"
 OLLAMA_URL = _secret("OLLAMA_URL", "http://localhost:11434")
 LOCAL_MODEL = _secret("LOCAL_MODEL", "qwen2.5:7b")            # answers (Apache-2.0 licence)
@@ -200,7 +206,7 @@ LOCAL_TIMEOUT = 180           # seconds - a laptop CPU can be slow on the first 
 
 # ---- Meaning search (semantic search) ------------------------------------------
 #   auto    = local AI embeddings when AI_PROVIDER is local, else Gemini when a Gemini key is set
-#   builtin = small model INSIDE OpsMate (fastembed, ~70 MB, downloaded once from the official
+#   builtin = small model INSIDE iKnow (fastembed, ~70 MB, downloaded once from the official
 #             Qdrant page on huggingface.co). No key, no quota, works on Streamlit Cloud too.
 #   gemini | local | off
 MEANING_SEARCH = _secret("MEANING_SEARCH", "auto")
@@ -217,11 +223,13 @@ CLAUDE_FAST_MODEL = _secret("CLAUDE_FAST_MODEL", "claude-haiku-4-5-20251001")
 # ---- Images inside documents ----------------------------------------------
 READ_DOC_IMAGES = True    # read screenshots/tables/scans inside uploaded files (AI mode)
 MAX_IMAGES_PER_DOC = 25
-# When the AI is out of quota, unreachable or says "not found", OpsMate still answers from the
+# When the AI is out of quota, unreachable or says "not found", iKnow still answers from the
 # documents if the strict word-match rule finds a strong match (the same rule used with AI off).
 DOCUMENT_ANSWER_WHEN_AI_UNSURE = True
 DOCUMENT_OVERRIDE_LEVELS = ("high", "medium")
 AI_PAUSE_SECONDS = 300        # after a quota error, skip the AI for 5 minutes (no slow retries)
+FAQ_MATCH_SIM = 0.65         # question worded like a document's "Q: ..." line (character similarity)
+FAQ_MATCH_BOOST = 1.5        # ... ranks that FAQ answer first
 DEFINITION_BOOST = 1.25      # 'what is X': sections headed 'X - ...' or 'What is X?' rank first
 
 # Ask a short question first when the answer depends on something the agent did not say

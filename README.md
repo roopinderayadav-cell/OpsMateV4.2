@@ -1,12 +1,27 @@
-# OpsMate - Your AI Operations Companion (NORAM · EUROPE · APAC)
+# iKnow - Answers from our SOPs and experts (NORAM · EUROPE · APAC)
+
+(Formerly OpsMate. Only the name on the screens changed - the database, saved answers and
+Secrets are the same.)
 
 Agents ask questions in plain words (typos and Hindi/Kannada/Telugu in English letters
 are fine) or paste a screenshot, and get one short answer with its SOP source and a
-confidence level. When OpsMate is not sure it says:
+confidence level. When iKnow is not sure it says:
 "I do not have answer to this question, please consult with your team supervisor."
 
-## What's new in OpsMate (v3, upgraded from Compass)
-- New look based on the OpsMate mock-up: home screen, topic buttons, Recent Questions,
+## What's new in v4.3 - new name iKnow, backup AI, smarter without AI
+- New name **iKnow** on every screen, the login page, chat messages, exports and templates.
+- **Backup AI:** Gemini main model -> Gemini second model -> Claude (if key) -> Ollama (if running)
+  -> documents. A failed AI is skipped for a few minutes; a note says when the backup answered.
+  Settings shows the order and tests every AI separately. New Secret: `AI_BACKUP` (see
+  LOCAL_AI_SETUP.md, section C).
+- **Smarter without AI:** exact-line look-up in long lists ("BLR airport", "code for Heathrow",
+  "LHR", "capital of Denmark", "airlines of Sweden", "card code for Amex"); "what is X" shows the
+  line that defines X; an FAQ is ranked first only when it covers every key word of the question;
+  "one way", "amex", "visa", "vs" understood; synonyms are never "spell-corrected".
+- Gemini requests time out after 60 seconds, so a hanging request never blocks an agent.
+
+## What's new in v3 (upgraded from Compass)
+- New look based on the iKnow mock-up: home screen, topic buttons, Recent Questions,
   Important Updates, answer card with confidence, sources with View.
 - More accurate: spelling + Hinglish fix, coverage check, re-ranking, optional Gemini
   semantic search. Tested: 26/26 real questions right, 10/10 out-of-scope questions refused.
@@ -53,27 +68,27 @@ Then Settings → "Test AI connection" and "Build semantic index now".
 Gemini free tier: Google may use what you send to improve its products - use sample /
 non-confidential SOPs on the free tier.
 
-## SME Desk (v4.2) - an expert answers what OpsMate could not
+## SME Desk (v4.2) - an expert answers what iKnow could not
 * Goes to the **SME Desk**: no answer found, documents disagree, confidence **below 70 %**
   (`SME_REVIEW_BELOW_PCT` in config.py), or an agent marked 👎. The same question asked many
   times shows once ("Asked 5×").
 * The SME signs in as **SME** (password `SME_PASSWORD` in Secrets, one line; until it is set SMEs
-  use the admin password) and for each question: **Save SME answer** · **OpsMate's answer is
+  use the admin password) and for each question: **Save SME answer** · **iKnow's answer is
   right** · **SOP update needed** (goes to Admin → Knowledge Gaps) · **Not a process question**.
-* The answer is saved as a verified answer together with the agents' own wording. OpsMate
+* The answer is saved as a verified answer together with the agents' own wording. iKnow
   searches it first next time (also for similar wording) and shows it as "SME / process team
   answer". Uploaded SOPs and documents are never changed.
 * Tab "Answers given by SMEs": search, edit when the process changes, switch off.
 * Agents see "sent to an SME" under a no-answer or a below-70 % answer.
 
 ## Live chat with an SME (v4.2)
-* Agents: menu **OpsMate → Chat with SME**, or the button **"Chat live with an SME"** under a
+* Agents: menu **iKnow → Chat with SME**, or the button **"Chat live with an SME"** under a
   no-answer / below-70 % answer (the question is filled in). Shows how many SMEs are online.
 * SMEs: **SME Desk → Live chat** - switch "I'm available" on, new chats pop up by themselves
   (checked every few seconds), **Pick up** (only one SME gets each chat), reply, and look things up
   in the SOPs on the same screen. SMEs also see "agents waiting" on their home screen.
 * When the chat ends the SME ticks the question/answer pairs worth keeping and corrects the
-  wording → saved as verified answers that OpsMate uses first next time. Greetings / "ok thanks"
+  wording → saved as verified answers that iKnow uses first next time. Greetings / "ok thanks"
   are left out automatically.
 * Every chat is kept in full: **SME Desk → Chat history** (search, export to Excel). If nobody
   answered, the question goes to the SME Desk queue so it is not lost.
@@ -108,20 +123,20 @@ Full steps: **LOCAL_AI_SETUP.md**. Short version:
 | Setting (Secrets or environment) | What it does |
 |---|---|
 | `AI_PROVIDER = "local"` | answers written by a free AI model on the same laptop/server (Ollama). No key, nothing leaves the network |
-| `MEANING_SEARCH = "builtin"` | meaning search with a small model inside OpsMate (fastembed). No key, no quota, also works on Streamlit Cloud |
+| `MEANING_SEARCH = "builtin"` | meaning search with a small model inside iKnow (fastembed). No key, no quota, also works on Streamlit Cloud |
 | `LOCAL_MODEL`, `LOCAL_EMBED_MODEL`, `LOCAL_VISION_MODEL`, `OLLAMA_URL` | optional, see LOCAL_AI_SETUP.md |
 
-Local AI does **not** run on Streamlit Community Cloud (too little memory) - run OpsMate and
-Ollama together on a laptop or company server. If the local AI is closed, OpsMate answers from
+Local AI does **not** run on Streamlit Community Cloud (too little memory) - run iKnow and
+Ollama together on a laptop or company server. If the local AI is closed, iKnow answers from
 the documents as before.
 
 ## What's new in v4
-- Menu bar across the top of every page (OpsMate / Admin) and an always-visible **Sign out** button and
+- Menu bar across the top of every page (iKnow / Admin) and an always-visible **Sign out** button and
   region selector - nothing depends on the side panel any more.
 - **LOB tabs** above the chat: NORAM · EUROPE · APAC · QBAY, each with its sub-LOB chips
   (e.g. NORAM: OBT Cancellation, Schedule Change, Ticketing, Refund, Profile Management, Others).
   Questions search the selected LOB (plus GLOBAL documents); the chosen sub-LOB's documents rank first.
-  If the LOB has no answer, OpsMate searches the other LOBs and says clearly which LOB the answer came from.
+  If the LOB has no answer, iKnow searches the other LOBs and says clearly which LOB the answer came from.
   Admins edit sub-LOBs in Settings and tag documents on upload or with ✏️ in Document Management.
 - **Confidence %** on every answer (High 80-98 %, Medium 60-79 %), based on match strength, how much of the
   question is covered, and how many documents agree. Hover the ⓘ next to it for the explanation.
@@ -136,11 +151,11 @@ the documents as before.
   (Finding answers *inside* a picture still needs `GEMINI_API_KEY`.)
 - **GDS entries look like a terminal**: commands in answers (RTABC123, FXP, TTP/RT, WETR*1, *T …) are shown
   green-on-dark, with a box listing every entry used in the answer.
-- **OpsMate asks before guessing**: if the steps differ by GDS (Amadeus / Sabre / Galileo …) and the agent did not
-  say which, or the best answers come from different sub-LOBs and no sub-LOB is selected, OpsMate asks with
+- **iKnow asks before guessing**: if the steps differ by GDS (Amadeus / Sabre / Galileo …) and the agent did not
+  say which, or the best answers come from different sub-LOBs and no sub-LOB is selected, iKnow asks with
   buttons, then answers. "Search all" answers without choosing. Settings: `ASK_CLARIFY`, `CLARIFY_GROUPS` in config.py.
 - **Answers even when the AI is out of quota**: if the AI fails, is out of quota or replies "not found" while the
-  documents clearly answer the question (strict word-match rule), OpsMate shows the document answer with a note.
+  documents clearly answer the question (strict word-match rule), iKnow shows the document answer with a note.
   After a quota error the AI is skipped for 5 minutes (`AI_PAUSE_SECONDS`), so answers come at once.
 - **Home screen**: "Try asking" now follows the selected LOB tab and sub-LOB chip (most-asked questions, then
   questions and section titles from that LOB's documents). The 10 topic buttons were removed (they looked like

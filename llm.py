@@ -1,16 +1,16 @@
 """
-llm.py - One connection point for the AI models OpsMate can use.
+llm.py - One connection point for the AI models iKnow can use.
 
   Gemini (Google)    - free tier available; also provides EMBEDDINGS (semantic search)
   Claude (Anthropic) - paid
   Local (Ollama)     - free, NO key, runs on your own laptop/server; nothing leaves the network
-  Built-in           - small meaning-search model inside OpsMate (fastembed), no key
-  none               - OpsMate still works offline (word matching + spelling fix)
+  Built-in           - small meaning-search model inside iKnow (fastembed), no key
+  none               - iKnow still works offline (word matching + spelling fix)
 
 Local AI uses only Python's own built-in web module (urllib) - no extra library needed.
 
 Every function here fails safely: if the AI is unreachable, out of quota or the
-key is wrong, it raises AIError and OpsMate falls back to its offline answer.
+key is wrong, it raises AIError and iKnow falls back to its offline answer.
 """
 import base64
 import importlib.util
@@ -36,27 +36,80 @@ class AIError(Exception):
 # WHICH PROVIDER?
 # ===========================================================================
 
-def provider():
+_ORDER = {"gemini": ["gemini", "claude", "local"], "claude": ["claude", "gemini", "local"],
+          "local": ["local", "gemini", "claude"], "auto": ["gemini", "claude", "local"]}
+_probe = {"at": 0.0, "url": "", "ok": False}
+
+
+def local_alive():
+    """Is Ollama answering at OLLAMA_URL? Quick check (1.5 s), remembered for 60 seconds.
+    Only talks to OLLAMA_URL."""
+    url = (config.OLLAMA_URL or "").strip()
+    if not url.startswith(("http://", "https://")):
+        return False
+    if _probe["url"] == url and time.time() - _probe["at"] < 60:
+        return _probe["ok"]
+    ok = False
+    try:
+        host = (urllib.parse.urlparse(url).hostname or "").lower()
+        handlers = [urllib.request.ProxyHandler({})] if host in ("localhost", "127.0.0.1", "::1") else []
+        with urllib.request.build_opener(*handlers).open(url.rstrip("/") + "/api/tags", timeout=1.5) as r:
+            ok = r.status == 200
+    except Exception:                                    # noqa: BLE001
+        ok = False
+    _probe.update(at=time.time(), url=url, ok=ok)
+    return ok
+
+
+def providers():
+    """Every AI iKnow may use, in the order it tries them.
+    The first is AI_PROVIDER; the others are BACKUPS used when it fails (quota used up, key
+    rejected, Ollama closed). AI_BACKUP: auto | on | off
+      auto - cloud first: backups are the other cloud key and Ollama (if it is running).
+             local first: NO cloud backup, so SOP text never leaves your network.
+      on   - every AI that is set up, also cloud backup for local.
+      off  - only AI_PROVIDER.
+    When every AI fails, iKnow answers from the documents (word + meaning search)."""
     p = (config.AI_PROVIDER or "auto").lower().strip()
     if p == "off":
-        return None
-    if p == "local":
-        return "local"
-    if p in ("auto", "gemini") and config.GEMINI_API_KEY:
-        return "gemini"
-    if p in ("auto", "claude") and config.ANTHROPIC_API_KEY:
-        return "claude"
-    return None
+        return []
+    p = p if p in _ORDER else "auto"
+    backup = (getattr(config, "AI_BACKUP", "auto") or "auto").lower().strip()
+    out = []
+    for x in _ORDER[p]:
+        primary = (x == p) or (p == "auto" and not out)
+        if not primary and (backup == "off" or (p == "local" and backup != "on" and x != "local")):
+            continue
+        if x == "gemini" and config.GEMINI_API_KEY:
+            out.append(x)
+        elif x == "claude" and config.ANTHROPIC_API_KEY:
+            out.append(x)
+        elif x == "local" and (p == "local" or local_alive()):
+            out.append(x)
+    return out
+
+
+def provider():
+    """The AI that will answer the next question: the first one in the order that is not
+    paused (paused = it failed a moment ago)."""
+    chain = providers()
+    for x in chain:
+        if not paused(f"generate:{x}"):
+            return x
+    return chain[0] if chain else None
 
 
 def ai_on():
     return provider() is not None
 
 
+def _can_see(p):
+    return p in ("gemini", "claude") or (p == "local" and bool(config.LOCAL_VISION_MODEL))
+
+
 def vision_on():
     """Can the AI read pictures (screenshots, images inside documents)?"""
-    p = provider()
-    return p in ("gemini", "claude") or (p == "local" and bool(config.LOCAL_VISION_MODEL))
+    return any(_can_see(p) for p in providers())
 
 
 def builtin_available():
@@ -109,15 +162,30 @@ def embed_label():
             "builtin": f"On (built-in {config.BUILTIN_EMBED_MODEL})"}.get(e, "Off")
 
 
+_NAMES = {"gemini": lambda: f"Gemini ({config.GEMINI_MODEL})",
+          "claude": lambda: f"Claude ({config.CLAUDE_MODEL})",
+          "local": lambda: f"Local AI ({config.LOCAL_MODEL})"}
+last_used = {"provider": None}       # which AI wrote the last answer (shown as a small note)
+
+
+def name_of(p):
+    return _NAMES[p]() if p in _NAMES else "Off"
+
+
 def label():
     p = provider()
-    if p == "gemini":
-        return f"Gemini ({config.GEMINI_MODEL})"
-    if p == "claude":
-        return f"Claude ({config.CLAUDE_MODEL})"
-    if p == "local":
-        return f"Local AI ({config.LOCAL_MODEL})"
-    return "Off"
+    if p is None:
+        return "Off"
+    chain = providers()
+    text = name_of(p)
+    if chain and p != chain[0]:
+        text += " - backup, " + name_of(chain[0]).split(" (")[0] + " is paused"
+    return text
+
+
+def chain_label():
+    """e.g. 'Gemini → Local AI → documents'"""
+    return " → ".join([name_of(p).split(" (")[0] for p in providers()] + ["documents"])
 
 
 # ===========================================================================
@@ -134,7 +202,9 @@ def _gemini_client():
             from google import genai
         except ImportError:
             raise AIError("Gemini library missing - run: pip install -r requirements.txt")
-        _gemini = genai.Client(api_key=config.GEMINI_API_KEY)
+        from google.genai import types
+        # 60-second limit: a hanging request never blocks the agent - the backup / documents answer
+        _gemini = genai.Client(api_key=config.GEMINI_API_KEY, http_options=types.HttpOptions(timeout=60000))
     return _gemini
 
 
@@ -229,7 +299,7 @@ def _local_embed(texts, query=False):
     return out
 
 
-# ---- Built-in meaning search (fastembed + ONNX, runs inside OpsMate) ----------
+# ---- Built-in meaning search (fastembed + ONNX, runs inside iKnow) ----------
 _builtin_model = None
 
 
@@ -275,7 +345,14 @@ QUOTA_TEXT = "The AI's free quota is used up for now - answering from documents.
 
 
 def paused(kind="generate"):
-    return time.time() < _paused_until.get(kind, 0.0)
+    """kind 'generate' = EVERY AI in the order is paused; 'generate:gemini' = only that one."""
+    now = time.time()
+    if now < _paused_until.get(kind, 0.0):
+        return True
+    if kind == "generate":
+        chain = providers()
+        return bool(chain) and all(now < _paused_until.get(f"generate:{p}", 0.0) for p in chain)
+    return False
 
 
 def _check_pause(kind):
@@ -285,11 +362,24 @@ def _check_pause(kind):
         raise AIError(LOCAL_DOWN_TEXT if provider() == "local" else QUOTA_TEXT)
 
 
+KEY_TEXT = "The AI key was rejected - check the key in Secrets."
+
+
 def _note_failure(kind, err):
-    if err.args and err.args[0] == QUOTA_TEXT:
-        _paused_until[kind] = time.time() + getattr(config, "AI_PAUSE_SECONDS", 300)
-    elif err.args and err.args[0] == LOCAL_DOWN_TEXT:     # Ollama closed: check again in 1 minute
-        _paused_until[kind] = time.time() + 60
+    """Skip an AI that just failed for a while, so the next question goes straight to the backup
+    (or the documents) instead of waiting for the same failure again."""
+    msg = err.args[0] if err.args else ""
+    if msg == QUOTA_TEXT:
+        wait = getattr(config, "AI_PAUSE_SECONDS", 300)
+    elif msg == KEY_TEXT:
+        wait = 1800                                 # wrong key: check again in 30 minutes
+    elif msg == LOCAL_DOWN_TEXT:
+        wait = 60                                   # Ollama closed: check again in 1 minute
+    elif msg.startswith(("AI unavailable", "Local AI took too long")):
+        wait = 60                                   # server busy / timeout
+    else:
+        return
+    _paused_until[kind] = time.time() + wait
 
 
 def _retry(fn):
@@ -313,7 +403,7 @@ def _friendly(e):
     msg = str(e)
     low = msg.lower()
     if "api key" in low or "api_key" in low or "401" in low or "permission" in low or "invalid" in low and "key" in low:
-        return "The AI key was rejected - check the key in Secrets."
+        return KEY_TEXT
     if "429" in low or "quota" in low or "resource_exhausted" in low or "rate" in low:
         return QUOTA_TEXT
     return f"AI unavailable ({msg[:120]})"
@@ -324,15 +414,29 @@ def _friendly(e):
 # ===========================================================================
 
 def generate(prompt, images=None, audio=None, fast=False, json_mode=False, max_tokens=1200):
-    p = provider()
-    if p is None:
+    """Ask the first AI that works. If it fails (quota, key, closed, busy) the next one in
+    providers() is tried at once; the failed one is skipped for a few minutes."""
+    chain = providers()
+    if not chain:
         raise AIError("AI is off")
-    _check_pause("generate")
-    try:
-        return _generate(p, prompt, images, audio, fast, json_mode, max_tokens)
-    except AIError as e:
-        _note_failure("generate", e)
-        raise
+    first = None
+    for p in chain:
+        if images and not _can_see(p):
+            continue
+        if audio and p != "gemini":
+            continue
+        if paused(f"generate:{p}"):
+            first = first or AIError(LOCAL_DOWN_TEXT if p == "local" else QUOTA_TEXT)
+            continue
+        try:
+            out = _generate(p, prompt, images, audio, fast, json_mode, max_tokens)
+            last_used["provider"] = p
+            return out
+        except AIError as e:
+            _note_failure(f"generate:{p}", e)
+            first = first or e
+    last_used["provider"] = None
+    raise first or AIError("No AI here can read pictures - answering from documents.")
 
 
 def _generate(p, prompt, images, audio, fast, json_mode, max_tokens):
@@ -368,7 +472,16 @@ def _generate(p, prompt, images, audio, fast, json_mode, max_tokens):
                 if "thinking" in str(e).lower():
                     return call(False)
                 raise
-        return _retry(run)
+        try:
+            return _retry(run)
+        except AIError as e:
+            # Each Gemini model has its OWN free quota: when the main model is used up or
+            # retired ("not found"), try the fast model before moving to the next AI.
+            other = config.GEMINI_FAST_MODEL
+            if fast or not other or other == model or str(e) == KEY_TEXT:
+                raise
+            model = other
+            return _retry(run)
 
     # Claude
     model = config.CLAUDE_FAST_MODEL if fast else config.CLAUDE_MODEL
@@ -435,23 +548,35 @@ def _embed(texts, query=False):
 
 def transcribe(audio_bytes, mime="audio/wav"):
     import prompts
-    if provider() != "gemini":
+    if "gemini" not in providers():
         raise AIError("Voice questions need a Gemini key")
     return generate(prompts.TRANSCRIBE_PROMPT, audio=(audio_bytes, mime), fast=True, max_tokens=300)
 
 
 def test_connection():
-    """Used by the Settings page: returns (ok, message)."""
-    if not ai_on() and not embeddings_on():
-        return False, "No AI set - OpsMate is running in free offline mode."
-    msg = []
-    try:
-        if ai_on():
-            reply = generate("Reply with the single word: ready", fast=True, max_tokens=20)
-            msg.append(f"✅ {label()} answered: {reply[:40]}")
-        if embeddings_on():
+    """Used by the Settings page: tests EVERY AI in the order and returns (ok, message).
+    A working AI is un-paused at once."""
+    chain = providers()
+    if not chain and not embeddings_on():
+        return False, ("No AI set - iKnow answers from the documents only (free, offline). "
+                       + ("Ollama is not answering at " + config.OLLAMA_URL + "." if not local_alive() else ""))
+    msg, ok_any = [], False
+    for p in chain:
+        try:
+            reply = _generate(p, "Reply with the single word: ready", None, None, True, False, 20)
+            _paused_until.pop(f"generate:{p}", None)
+            msg.append(f"✅ {name_of(p)}: {reply[:30]}")
+            ok_any = True
+        except AIError as e:
+            _note_failure(f"generate:{p}", e)
+            msg.append(f"❌ {name_of(p)}: {e}")
+    if embeddings_on():
+        try:
+            _paused_until.pop("embed", None)
             embed(["test"], query=True)
-            msg.append(f"meaning search ✅ ({embed_label()})")
-        return True, " · ".join(msg)
-    except AIError as e:
-        return False, " · ".join(msg + [f"❌ {e}"])
+            msg.append(f"✅ meaning search ({embed_label()})")
+            ok_any = ok_any or not chain
+        except AIError as e:
+            msg.append(f"❌ meaning search: {e}")
+    msg.append("documents ✅ always on")
+    return ok_any, " · ".join(msg)

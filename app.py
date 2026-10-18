@@ -1,5 +1,5 @@
 """
-app.py - OpsMate (NORAM / EUROPE / APAC). Staff screens + navigation.
+app.py - iKnow (NORAM / EUROPE / APAC). Staff screens + navigation.
 Admin screens are in admin_pages.py.   Run:  streamlit run app.py
 """
 import io
@@ -84,13 +84,13 @@ if not ss.user:
                     ss.is_admin, ss.is_sme = role.startswith("Admin"), role.startswith(("SME", "Admin"))
                     st.rerun()
     with right:
-        ui.card("How OpsMate works", "<ol style='margin:0;padding-left:18px;line-height:1.9'>"
+        ui.card("How iKnow works", "<ol style='margin:0;padding-left:18px;line-height:1.9'>"
                 "<li>Pick your region and a topic, or just type your question</li>"
                 "<li>Spelling mistakes and Hindi / Kannada / Telugu in English letters are fine</li>"
                 "<li>Paste a screenshot of an error to get help with it</li>"
                 "<li>Get one short answer with its SOP source and a confidence level</li>"
-                "<li>Rate it 👍 / 👎 - OpsMate learns from every rating</li></ol>")
-        ui.card("When OpsMate is not sure", f"<p style='margin:0'>It never guesses. You will see: "
+                "<li>Rate it 👍 / 👎 - iKnow learns from every rating</li></ol>")
+        ui.card("When iKnow is not sure", f"<p style='margin:0'>It never guesses. You will see: "
                 f"<i>“{ui.esc(config.FALLBACK_TEXT)}”</i> and the question goes to the process team.</p>")
     st.stop()
 
@@ -152,14 +152,14 @@ def show_sources(sources, key):
                                        key=f"dl{key}{j}")
 
 
-CONF_HELP = ("Confidence % = how sure OpsMate is that the answer comes from your documents. "
+CONF_HELP = ("Confidence % = how sure iKnow is that the answer comes from your documents. "
              "High is 80-98%, Medium 60-79%. It is based on how closely the best document matches "
              "your question, how many of your key words it covers, and how many documents say the same. "
-             "Below Medium, OpsMate does not answer and asks you to consult your supervisor.")
+             "Below Medium, iKnow does not answer and asks you to consult your supervisor.")
 
 
 def render_clarify(msg, i):
-    """OpsMate asks one short question (which GDS / which process) with buttons, then answers."""
+    """iKnow asks one short question (which GDS / which process) with buttons, then answers."""
     info = (msg.get("meta") or {}).get("clarify") or {}
     st.markdown(f"<div class='om-clarify'>🤔 {ui.esc(msg['content'])}</div>", unsafe_allow_html=True)
     if msg.get("picked"):
@@ -174,7 +174,7 @@ def render_clarify(msg, i):
             msg["picked"] = o["label"]
             st.rerun()
     if cols[-1].button("Search all", key=f"cl{region}{i}_all", width="stretch",
-                       help="Answer without choosing - OpsMate searches everything"):
+                       help="Answer without choosing - iKnow searches everything"):
         ss.pending_clarify = {"q": msg.get("question", ""), "sub_lob": msg.get("sub_lob")}
         msg["picked"] = "Search all"
         st.rerun()
@@ -220,7 +220,7 @@ def render_answer(msg, i):
             st.markdown(f"<div class='om-important'>❗ <b>Important:</b> {ui.esc(meta['important'])}</div>",
                         unsafe_allow_html=True)
         if meta.get("learned"):
-            st.caption("🧠 From an answer OpsMate learned (SME / process team / staff 👍)")
+            st.caption("🧠 From an answer iKnow learned (SME / process team / staff 👍)")
         if meta.get("sme_review"):
             st.caption(f"🧑‍🏫 Confidence is below {config.SME_REVIEW_BELOW_PCT}% - sent to an SME to confirm. "
                        "Check the source before you act.")
@@ -253,7 +253,7 @@ def render_answer(msg, i):
             st.switch_page(CHAT_PAGE)
     if msg.get("qid") and result == "answered":
         if msg.get("rated") is True:
-            st.caption("Thanks - OpsMate learns from your feedback ✔")
+            st.caption("Thanks - iKnow learns from your feedback ✔")
         elif msg.get("rated") != "pending":
             b1, b2, _ = st.columns([1.6, 2, 4])
             if b1.button("👍 Helpful", key=f"up{region}{i}"):
@@ -302,7 +302,7 @@ def ask_now(text, image=None, sub_lob=None, clarify=True):
 
 
 # ---------------------------------------------------------------------------
-# PAGE: Ask OpsMate (home + chat)
+# PAGE: Ask iKnow (home + chat)
 # ---------------------------------------------------------------------------
 def page_ask():
     chat = ss.chats[region]
@@ -450,7 +450,7 @@ def page_sme_chat():
     online = kb.smes_online(region)
     if not chat:
         st.caption("Ask a subject matter expert directly. The whole chat is saved, and the SME can turn the "
-                   "answer into a verified answer that OpsMate gives everyone next time.")
+                   "answer into a verified answer that iKnow gives everyone next time.")
         if online:
             st.success(f"🟢 {len(online)} SME(s) online for {region} now.")
         else:
@@ -594,14 +594,14 @@ def _admin(fn):
     return lambda: fn(region, ss.user)
 
 
-staff = [_page(page_ask, "Ask OpsMate", "💬", "ask", True),
+staff = [_page(page_ask, "Ask iKnow", "💬", "ask", True),
          _page(page_sme_chat, "Chat with SME", "🧑‍🏫", "sme-chat"),
          _page(page_my_questions, "My Questions", "🕘", "my-questions"),
          _page(page_library, "Knowledge Library", "📚", "library"),
          _page(page_quick_guides, "Quick Guides", "⚡", "quick-guides"),
          _page(page_announcements, "Announcements", "📢", "announcements")]
 CHAT_PAGE = staff[1]
-sections = {"OpsMate": staff}
+sections = {"iKnow": staff}
 if ss.is_sme or ss.is_admin:
     n_sme = len(kb.sme_queue()) + len(kb.waiting_chats())
     SME_PAGE = _page(_admin(admin_pages.sme_desk), f"SME Desk ({n_sme})", "🧑‍🏫", "sme-desk")

@@ -1,8 +1,8 @@
 @echo off
-title OpsMate - Your AI Operations Companion
+title iKnow - Answers from our SOPs and experts
 cd /d "%~dp0"
 echo ==================================================
-echo   OpsMate - Your AI Operations Companion
+echo   iKnow - Answers from our SOPs and experts
 echo ==================================================
 echo.
 echo Step 1 of 2: Checking the required libraries (first time takes 1-2 minutes)...
